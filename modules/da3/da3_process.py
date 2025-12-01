@@ -10,8 +10,9 @@ from pathlib import Path
 from PIL import Image
 from depth_anything_3.api import DepthAnything3
 
+
 def main():
-    # --- 1. Setup Paths ---
+    # --- 1. Setup Paths & Config ---
     scene = os.environ.get("SCENE_NAME")
     data_root = Path(os.environ.get("DATA_ROOT"))
     model_dir = os.environ.get("DA3_MODEL_DIR", "checkpoints/da3")
@@ -20,6 +21,7 @@ def main():
     out_json = data_root / scene / "transforms.json"
     cache_dir = data_root / scene
     
+    # --- 2. Load & Sort Frames ---
     frame_files = sorted(
         [f for f in img_dir.iterdir() if f.suffix.lower() in {'.jpg', '.jpeg', '.png'}],
         key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
@@ -31,7 +33,7 @@ def main():
         orig_w, orig_h = img.size
     print(f"[DA3] Original Res: {orig_w}x{orig_h}")
 
-    # --- 2. Load Model & Run Inference ---
+    # --- 3. Load Model & Run Inference ---
     device = "cuda"
     print(f"[DA3] Loading model from {model_dir}...")
     
@@ -68,7 +70,6 @@ def main():
     num_frames = len(preds.extrinsics)
     
     w2c = np.eye(4, dtype=np.float32).reshape(1, 4, 4).repeat(num_frames, axis=0)
-    
     w2c[:, :3, :] = preds.extrinsics
 
     c2w_all = np.linalg.inv(w2c)

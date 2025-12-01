@@ -82,11 +82,6 @@ for CFG in "$BASE_CONF" "$POST_CONF" "$TEX_CONF"; do
     # Data paths
     sed -i "s|data_root_dir = ./data_dir/replica/|data_root_dir = ${DATA_ROOT}/|g" "$CFG"
     sed -i "s|data_dir = room_0|data_dir = ${SCENE_NAME}|g" "$CFG"
-
-    # Resolution
-    sed -i "s|img_res = \[512, 512\]|img_res = [1080, 1920]|g" "$CFG"
-
-    # Rename experiment
     sed -i "s|expname = holoscene_replica_room_0|expname = holoscene_${SCENE_NAME}|g" "$CFG"
 done
 
@@ -129,7 +124,7 @@ echo "--- Running Stage 2: Post-processing... ---"
 python3 training/exp_runner_post.py --conf "$POST_CONF" \
     --is_continue \
     --timestamp latest \
-    --checkpoint 1000
+    --checkpoint latest
 
 
 ############################################
@@ -139,7 +134,7 @@ echo "--- Running Stage 3: Texture refinement... ---"
 python3 training/exp_runner_texture.py --conf "$TEX_CONF" \
     --is_continue \
     --timestamp latest \
-    --checkpoint 1000
+    --checkpoint latest
 
 
 ############################################
@@ -149,7 +144,7 @@ echo "--- Running Stage 4: Gaussian on mesh... ---"
 python3 training/exp_runner_gaussian_on_mesh.py --conf "$TEX_CONF" \
     --is_continue \
     --timestamp latest \
-    --checkpoint 1000
+    --checkpoint latest
 
 
 ############################################

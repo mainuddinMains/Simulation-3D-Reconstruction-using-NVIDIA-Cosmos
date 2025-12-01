@@ -2,43 +2,39 @@
 
 set -e
 
-# --- Configuration ---
+# --- Config ---
 INPUT_DIR="/data/input"
-INPUT_FILE=$(find "$INPUT_DIR" -maxdepth 1 \( -name "*.bag" -o -name "*.mp4" \) -print -quit)
 OUTPUT_DIR="${INPUT_DIR}/custom/${SCENE_NAME}/images"
+INPUT_FILE=$(find "$INPUT_DIR" -maxdepth 1 \( -name "*.bag" -o -name "*.mp4" \) -print -quit 2>/dev/null)
 
 # --- Validation ---
-if [ -z "$INPUT_FILE" ]; then
-    echo "Error: No .bag or .mp4 file found in $INPUT_DIR" >&2
-    exit 1
-fi
+[ -z "$INPUT_FILE" ] && echo "Error: No input file found." >&2 && exit 1
 
-if [ -d "$OUTPUT_DIR" ] && [ "$(ls -A "$OUTPUT_DIR")" ]; then
-    echo "--- [Preprocessor] Images already exist. Skipping. ---"
+if [ -d "$OUTPUT_DIR" ] && [ -n "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ]; then
+    echo "Images exist. Skipping."
     exit 0
 fi
 
 # --- Processing ---
-echo "--- [Preprocessor] Processing: $INPUT_FILE ---"
+echo "Processing: $INPUT_FILE"
 mkdir -p "$OUTPUT_DIR"
 
 if [[ "$INPUT_FILE" == *.bag ]]; then
     TEMP_DIR=$(mktemp -d)
-    trap "rm -rf '${TEMP_DIR}'" EXIT SIGINT SIGTERM
+    trap "rm -rf '$TEMP_DIR'" EXIT
 
-    echo "--- [Preprocessor] Extracting .bag frames ---"
     rs-convert -i "$INPUT_FILE" -p "$TEMP_DIR/frame" > /dev/null
-
-    ffmpeg -y -framerate "${CAPTURE_FRAMERATE}" \
-        -pattern_type glob -i "$TEMP_DIR/*.png" \
-        -vf "fps=${FPS_EXTRACT}" \
-        "$OUTPUT_DIR/frame_%04d.png"
-
-elif [[ "$INPUT_FILE" == *.mp4 ]]; then
-    echo "--- [Preprocessor] Converting .mp4 file ---"
-    ffmpeg -y -i "$INPUT_FILE" \
-        -vf "fps=${FPS_EXTRACT}" \
-        "$OUTPUT_DIR/frame_%04d.png"
+    
+    SOURCE="$TEMP_DIR/*.png"
+    PRE_FLAGS="-framerate ${CAPTURE_FRAMERATE} -pattern_type glob"
+else
+    SOURCE="$INPUT_FILE"
+    PRE_FLAGS=""
 fi
 
-echo "--- [Preprocessor] Done. ---"
+ffmpeg -y $PRE_FLAGS -i "$SOURCE" \
+    -vf "fps=${FPS_EXTRACT},scale=512:512:force_original_aspect_ratio=increase,crop=512:512,format=rgb24" \
+    -c:v png -compression_level 6 -pix_fmt rgb24 \
+    "$OUTPUT_DIR/frame_%04d.png"
+
+echo "Done: $OUTPUT_DIR"
