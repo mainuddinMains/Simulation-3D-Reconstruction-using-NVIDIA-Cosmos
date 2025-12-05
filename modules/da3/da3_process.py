@@ -3,16 +3,16 @@
 import os
 import re
 import json
-
 import torch
 import numpy as np
+
 from pathlib import Path
 from PIL import Image
 from depth_anything_3.api import DepthAnything3
 
 
 def main():
-    # --- 1. Setup Paths & Config ---
+    # --- 1. Config & Setup ---
     scene = os.environ["SCENE_NAME"]
     data_root = Path(os.environ["DATA_ROOT"])
     model_dir = os.environ["DA3_MODEL_DIR"]
@@ -22,7 +22,6 @@ def main():
     out_json = data_root / scene / "transforms.json"
     cache_dir = data_root / scene
     
-    # --- 2. Load & Sort Frames ---
     frame_files = sorted(
         [f for f in img_dir.iterdir() if f.suffix.lower() in {'.jpg', '.jpeg', '.png'}],
         key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
@@ -34,9 +33,7 @@ def main():
         orig_w, orig_h = img.size
     print(f"[DA3] Original Res: {orig_w}x{orig_h}")
 
-    # --- 3. Load Model & Run Inference ---
-    print(f"[DA3] Loading model from {model_dir}...")
-    
+    # --- 2. Load Model & Run Inference ---    
     model = DepthAnything3.from_pretrained(model_dir).to(device).eval()
     
     frame_paths_str = [str(f) for f in frame_files]
@@ -45,10 +42,10 @@ def main():
         preds = model.inference(
             image=frame_paths_str,
             export_dir=str(cache_dir),
-            export_format="npz"
+            export_format="glb"
         )
 
-    # --- 4. Vectorized Intrinsics Processing ---
+    # --- 3. Vectorized Intrinsics Processing ---
     proc_h, proc_w = preds.processed_images.shape[1:3]
     scale_x, scale_y = orig_w / proc_w, orig_h / proc_h
 
@@ -69,7 +66,7 @@ def main():
     final_fx, final_fy, final_cx, final_cy = np.median(valid_params, axis=0)
     angle_x = 2.0 * np.arctan((orig_w / 2.0) / final_fx)
 
-    # --- 5. Vectorized Extrinsics Processing ---
+    # --- 4. Vectorized Extrinsics Processing ---
     num_frames = len(preds.extrinsics)
     
     w2c = np.eye(4, dtype=np.float32).reshape(1, 4, 4).repeat(num_frames, axis=0)
@@ -86,7 +83,7 @@ def main():
     flip_mat = np.diag([1, -1, -1, 1]).astype(np.float32)
     c2w_opengl = c2w_opencv @ flip_mat
 
-    # --- 6. Sanity Check for Movement ---
+    # --- 5. Sanity Check for Movement ---
     first_pos = c2w_opengl[0, :3, 3]
     last_pos = c2w_opengl[-1, :3, 3]
     drift = np.linalg.norm(first_pos - last_pos)
@@ -95,7 +92,7 @@ def main():
     if drift < 0.001:
         print("[WARNING] Camera trajectory is extremely static. Reconstruction may fail.")
 
-    # --- 7. Generate JSON ---
+    # --- 6. Generate JSON ---
     frames_json = [
         {
             "file_path": f"images/{f.name}",

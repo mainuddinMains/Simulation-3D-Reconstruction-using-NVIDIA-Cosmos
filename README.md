@@ -6,7 +6,7 @@ into simulation-ready 3D assets using a sequence of modular components.
 
 ## Requirements
 - NVIDIA GPU with CUDA support
-- 16GB VRAM
+- 48GB VRAM
 - 200GB Disk Space
 - Docker Engine
 - A Hugging Face access token with permission to pull from:

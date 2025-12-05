@@ -5,10 +5,10 @@ set -e
 # --- Config ---
 INPUT_DIR="/data/input"
 OUTPUT_DIR="${INPUT_DIR}/custom/${SCENE_NAME}/images"
-INPUT_FILE=$(find "$INPUT_DIR" -maxdepth 1 \( -name "*.bag" -o -name "*.mp4" \) -print -quit 2>/dev/null)
+INPUT_FILE=$(find "$INPUT_DIR" -maxdepth 1 -type f -iregex ".*\.\(bag\|mp4\|mov\|mkv\|avi\)$" -print -quit 2>/dev/null)
 
 # --- Validation ---
-[ -z "$INPUT_FILE" ] && echo "Error: No input file found." >&2 && exit 1
+[ -z "$INPUT_FILE" ] && echo "Error: No valid input video found (checked .bag, .mp4, .mov, .mkv, .avi)." >&2 && exit 1
 
 if [ -d "$OUTPUT_DIR" ] && [ -n "$(ls -A "$OUTPUT_DIR" 2>/dev/null)" ]; then
     echo "Images exist. Skipping."
@@ -37,4 +37,6 @@ ffmpeg -y $PRE_FLAGS -i "$SOURCE" \
     -c:v png -compression_level 6 -pix_fmt rgb24 \
     "$OUTPUT_DIR/frame_%04d.png"
 
-echo "Done: $OUTPUT_DIR"
+IMAGE_COUNT=$(find "$OUTPUT_DIR" -maxdepth 1 -type f -name "*.png" | wc -l)
+
+echo "Done: $OUTPUT_DIR - Extracted **$IMAGE_COUNT** images."
