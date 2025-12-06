@@ -19,20 +19,16 @@ def get_config():
         "out_json": root / scene / "transforms.json",
         "cache_dir": root / scene / "da3_out",
         "model_dir": os.environ["DA3_MODEL_DIR"],
-        "sample_rate": int(os.environ["DA3_SAMPLE_RATE"]),
         "device": "cuda"
     }
 
 
-def get_frame_paths(img_dir, sample_rate=1):
-    """Returns sorted frame paths, applying the sample rate."""
+def get_frame_paths(img_dir):
+    """Returns sorted frame paths."""
     files = sorted(
         [f for f in img_dir.iterdir() if not f.name.startswith('.')],
         key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
     )
-    if sample_rate > 1:
-        print(f"[DA3] Downsampling frames by factor of {sample_rate}...")
-        files = files[::sample_rate]
     return files
 
 
@@ -102,7 +98,7 @@ def compute_extrinsics(preds):
 
 def main():
     cfg = get_config()
-    frame_files = get_frame_paths(cfg["img_dir"], cfg["sample_rate"])
+    frame_files = get_frame_paths(cfg["img_dir"])
     orig_w, orig_h = get_image_dims(frame_files[0])
 
     print(f"[DA3] Scene: {cfg['scene']} | Frames: {len(frame_files)} | Res: {orig_w}x{orig_h}")

@@ -48,6 +48,7 @@ def save_mask(filepath, masks, ids, scores, id_map, h, w, min_score):
 
     Image.fromarray(final_mask).save(filepath)
 
+
 def print_stats_table(prompts, prompt_counts, id_to_prompt, valid_ids, total_frames):
     """Generates the CLI summary table."""
     prompt_to_ids_all = defaultdict(list)
@@ -69,6 +70,7 @@ def print_stats_table(prompts, prompt_counts, id_to_prompt, valid_ids, total_fra
         print(f"{p:<25} | {f'{p_count}/{total_frames}':<12} | {ratio_str:<15} | {ids_str}")
 
     print("-" * 80)
+
 
 def main():
     cfg = get_config()
