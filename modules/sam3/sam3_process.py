@@ -4,154 +4,141 @@ import os
 import re
 import torch
 import numpy as np
-
 from PIL import Image
 from pathlib import Path
-from collections import Counter
-from transformers import (
-    Sam3VideoModel, Sam3VideoProcessor,
-    Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
-)
+from collections import Counter, defaultdict
+from transformers import Sam3VideoConfig, Sam3VideoModel, Sam3VideoProcessor
 
 
-def main():
-    # --- 1. Config & Setup ---
+def get_config():
     scene = os.environ["SCENE_NAME"]
-    data_root = Path(os.environ["DATA_ROOT"])
-    min_score = float(os.environ["SAM3_MIN_SCORE"])
-    min_duration = float(os.environ["SAM3_MIN_FRAME_PERCENT"]) / 100.0
-    device = "cuda"
+    root = Path(os.environ["DATA_ROOT"])
+    return {
+        "scene": scene,
+        "img_dir": root / scene / "images",
+        "out_dir": root / scene / "instance_mask",
+        "min_score": float(os.environ["SAM3_MIN_SCORE"]),
+        "min_dur": float(os.environ["SAM3_MIN_FRAME_DURATION"]) / 100.0,
+        "prompts": [p.strip() for p in Path("prompts.txt").read_text().splitlines() if p.strip()],
+        "device": "cuda"
+    }
 
-    img_dir = data_root / scene / "images"
-    out_dir = data_root / scene / "instance_mask"
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    prompts = [p.strip() for p in Path("prompts.txt").read_text().splitlines() if p.strip()]
-    
-    frame_files = sorted(
-        [f for f in img_dir.iterdir() if f.name[0] != '.'],
+def load_frames(img_dir):
+    """Loads and numerically sorts video frames."""
+    files = sorted(
+        [f for f in img_dir.iterdir() if not f.name.startswith('.')],
         key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
     )
+    return [Image.open(f) for f in files], files
+
+
+def save_mask(filepath, masks, ids, scores, id_map, h, w, min_score):
+    """Composites overlapping masks using Painter's Algorithm (largest drawn first)."""
+    final_mask = np.full((h, w), 255, dtype=np.uint8)
     
-    frames = [Image.open(f) for f in frame_files]
+    valid_indices = [i for i, s in enumerate(scores) if s >= min_score and int(ids[i]) in id_map]
+    
+    if valid_indices:
+        curr_masks = masks[valid_indices]
+        curr_ids = ids[valid_indices]
+        areas = curr_masks.sum(axis=(1, 2))
+        for idx in np.argsort(areas)[::-1]:
+            final_mask[curr_masks[idx] > 0] = id_map[int(curr_ids[idx])]
+
+    Image.fromarray(final_mask).save(filepath)
+
+def print_stats_table(prompts, prompt_counts, id_to_prompt, valid_ids, total_frames):
+    """Generates the CLI summary table."""
+    prompt_to_ids_all = defaultdict(list)
+    for oid, p_text in id_to_prompt.items():
+        prompt_to_ids_all[p_text].append(oid)
+
+    print("\n" + "-" * 80)
+    print(f"{'PROMPT':<25} | {'FRAMES':<12} | {'IDS (KEEP/ALL)':<15} | {'KEPT IDS'}")
+    print("-" * 80)
+
+    for p in prompts:
+        p_count = prompt_counts.get(p, 0)
+        all_ids = sorted(prompt_to_ids_all.get(p, []))
+        kept_ids = [oid for oid in all_ids if oid in valid_ids]
+        
+        ratio_str = f"{len(kept_ids)}/{len(all_ids)}"
+        ids_str = str(kept_ids) if len(kept_ids) < 8 else f"{len(kept_ids)} IDs"
+        
+        print(f"{p:<25} | {f'{p_count}/{total_frames}':<12} | {ratio_str:<15} | {ids_str}")
+
+    print("-" * 80)
+
+def main():
+    cfg = get_config()
+    cfg["out_dir"].mkdir(parents=True, exist_ok=True)
+
+    frames, frame_files = load_frames(cfg["img_dir"])
     h, w = frames[0].size[::-1]
+    total_frames = len(frames)
 
-    print(f"[SAM3] Processing {len(frames)} frames. Score > {min_score}, Frame Duration > {min_duration}%")
+    model = Sam3VideoModel.from_pretrained("facebook/sam3", config=Sam3VideoConfig(recondition_on_trk_masks=True))
+    model.to(cfg["device"], dtype=torch.bfloat16)
+    processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
 
-    # --- 2. Load Model & Run Inference ---  
-    dtype = torch.bfloat16
-    
-    pcs_model = Sam3VideoModel.from_pretrained("facebook/sam3").to(device, dtype=dtype)
-    pcs_processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
-    
-    pvs_model = Sam3TrackerVideoModel.from_pretrained("facebook/sam3").to(device, dtype=dtype)
-    pvs_processor = Sam3TrackerVideoProcessor.from_pretrained("facebook/sam3")
-
-    # --- 3. Bootstrap: Get Seed Masks ---
-    pcs_session = pcs_processor.init_video_session(
-        video=frames,
-        inference_device=device,
-        processing_device="cpu",
-        video_storage_device="cpu",
-        dtype=dtype,
+    session = processor.init_video_session(
+        video=frames, inference_device=cfg["device"], processing_device="cpu", video_storage_device="cpu", dtype=torch.bfloat16
     )
+    processor.add_text_prompt(session, cfg["prompts"])
 
-    pcs_session = pcs_processor.add_text_prompt(pcs_session, prompts)
+    cached_data = []
+    prompt_counts = Counter()
+    id_counts = Counter()
+    id_to_prompt = {}
 
-    init_masks, init_ids = [], []
-    
+    print("Running inference...")
     with torch.inference_mode():
-        for output in pcs_model.propagate_in_video_iterator(pcs_session):
-            if output.frame_idx > 0: break
+        for output in model.propagate_in_video_iterator(session):
+            processed = processor.postprocess_outputs(session, output)
             
-            processed = pcs_processor.postprocess_outputs(pcs_session, output)
             scores = processed["scores"].cpu().numpy()
+            ids = processed["object_ids"].cpu().numpy().astype(int)
+            masks = processed["masks"].cpu().numpy().astype(np.uint8)
+            prompt_map = processed["prompt_to_obj_ids"]
+
+            if masks.ndim == 2: masks = masks[np.newaxis, ...]
+
+            high_conf_ids = set(ids[scores >= cfg["min_score"]])
             
-            keep = scores >= min_score
-            init_ids = processed["object_ids"].cpu().numpy()[keep].astype(int).tolist()
-            init_masks = [m for m in processed["masks"].cpu().numpy()[keep].astype(np.uint8)]
-            break
+            for p_text, p_ids in prompt_map.items():
+                active_ids = [oid for oid in p_ids if oid in high_conf_ids]
+                if active_ids:
+                    prompt_counts[p_text] += 1
+                    for oid in active_ids:
+                        id_counts[oid] += 1
+                        id_to_prompt[oid] = p_text
 
-    if not init_ids:
-        print("No objects found to track.")
-        return
-
-    # --- 4. Setup Tracker ---
-    print(f"Seeding tracker with {len(init_ids)} objects...")
-    pvs_session = pvs_processor.init_video_session(
-        video=frames,
-        inference_device=device,
-        processing_device="cpu",
-        video_storage_device="cpu",
-        dtype=dtype,
-    )
-
-    pvs_processor.add_inputs_to_inference_session(
-        pvs_session, frame_idx=0, input_masks=init_masks, obj_ids=init_ids
-    )
-
-    with torch.inference_mode():
-        _ = pvs_model(inference_session=pvs_session, frame_idx=0)
-
-    # --- 5. Run Propagation ---
-    print("Running PVS inference...")
-    frame_results = []
-    id_counter = Counter()
-
-    with torch.inference_mode():
-        for output in pvs_model.propagate_in_video_iterator(pvs_session):
-            masks_tensor = pvs_processor.post_process_masks(
-                [output.pred_masks], original_sizes=[(h, w)], binarize=True
-            )[0]
-            
-            if isinstance(masks_tensor, torch.Tensor):
-                masks_tensor = masks_tensor.detach().to(torch.float32).cpu().numpy()
-            
-            masks = np.array(masks_tensor).astype(np.uint8)
-            ids = np.array(list(pvs_session.obj_ids), dtype=int)
-
-            if masks.ndim == 4 and masks.shape[1] == 1:
-                masks = masks[:, 0, :, :]
-            elif masks.ndim == 2:
-                masks = masks[np.newaxis, ...]
-            
-            n = min(len(ids), len(masks))
-            ids, masks = ids[:n], masks[:n]
-
-            for oid, m in zip(ids, masks):
-                if m.sum() > 0: id_counter.update([oid])
-
-            frame_results.append({
-                "file_name": frame_files[output.frame_idx].name,
-                "ids": ids,
-                "masks": masks
+            cached_data.append({
+                "masks": masks, "ids": ids, "scores": scores, "file": frame_files[output.frame_idx]
             })
 
-    # --- 6. Filter & Save ---
-    min_frames = np.ceil(len(frames) * min_duration)
-    valid_ids = {oid for oid, c in id_counter.items() if c >= min_frames}
+    min_frames_id = int(np.ceil(total_frames * cfg["min_dur"]))
+    final_valid_ids = {oid for oid, c in id_counts.items() if c >= min_frames_id}
+
+    print_stats_table(cfg["prompts"], prompt_counts, id_to_prompt, final_valid_ids, total_frames)
+
+    if not final_valid_ids:
+        print("No valid IDs found. Exiting.")
+        return
+
+    id_map = {oid: i for i, oid in enumerate(sorted(final_valid_ids)) if i < 255}
     
-    id_map = {oid: i for i, oid in enumerate(sorted(valid_ids)) if i < 255}
+    print(f"Summary: Processed {total_frames} frames. Score > {cfg['min_score']}, Frame Duration > {cfg['min_dur']*100}%\n")
+    print(f"Saving {len(final_valid_ids)} object masks...")
+    for data in cached_data:
+        save_mask(
+            cfg["out_dir"] / data["file"].name, 
+            data["masks"], data["ids"], data["scores"], 
+            id_map, h, w, cfg["min_score"]
+        )
 
-    print(f"Saving masks for {len(id_map)} objects...")
-
-    for res in frame_results:
-        canvas = np.full((h, w), 255, dtype=np.uint8)
-        
-        objects_to_draw = []
-        for i, oid in enumerate(res["ids"]):
-            if oid in id_map:
-                mask = res["masks"][i]
-                objects_to_draw.append((mask, oid, mask.sum()))
-        
-        objects_to_draw.sort(key=lambda x: x[2], reverse=True)
-
-        for mask, oid, _ in objects_to_draw:
-            canvas[mask > 0] = id_map[oid]
-
-        Image.fromarray(canvas).save(out_dir / res["file_name"])
-
-    print("Done.")
+    print(f"[SAM3] Done. Saved to {cfg['out_dir']}")
 
 
 if __name__ == "__main__":

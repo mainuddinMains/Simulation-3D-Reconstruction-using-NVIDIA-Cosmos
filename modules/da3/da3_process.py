@@ -5,58 +5,63 @@ import re
 import json
 import torch
 import numpy as np
-
 from PIL import Image
 from pathlib import Path
 from depth_anything_3.api import DepthAnything3
 
 
-def main():
-    # --- 1. Config & Setup ---
+def get_config():
     scene = os.environ["SCENE_NAME"]
-    data_root = Path(os.environ["DATA_ROOT"])
-    model_dir = os.environ["DA3_MODEL_DIR"]
-    sample_rate = int(os.environ["DA3_SAMPLE_RATE"])
-    device = "cuda"
-    
-    img_dir = data_root / scene / "images"
-    out_json = data_root / scene / "transforms.json"
-    cache_dir = data_root / scene
-    
-    frame_files = sorted(
-        [f for f in img_dir.iterdir() if f.name[0] != '.'],
+    root = Path(os.environ["DATA_ROOT"])
+    return {
+        "scene": scene,
+        "img_dir": root / scene / "images",
+        "out_json": root / scene / "transforms.json",
+        "cache_dir": root / scene / "da3_out",
+        "model_dir": os.environ["DA3_MODEL_DIR"],
+        "sample_rate": int(os.environ["DA3_SAMPLE_RATE"]),
+        "device": "cuda"
+    }
+
+
+def get_frame_paths(img_dir, sample_rate=1):
+    """Returns sorted frame paths, applying the sample rate."""
+    files = sorted(
+        [f for f in img_dir.iterdir() if not f.name.startswith('.')],
         key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
     )
-
     if sample_rate > 1:
-        print(f"[DA3] Applying sample rate of {sample_rate}...")
-        frame_files = frame_files[::sample_rate]
+        print(f"[DA3] Downsampling frames by factor of {sample_rate}...")
+        files = files[::sample_rate]
+    return files
 
-    print(f"[DA3] Scene='{scene}', Frames={len(frame_files)}")
 
-    with Image.open(frame_files[0]) as img:
-        orig_w, orig_h = img.size
-    print(f"[DA3] Original Res: {orig_w}x{orig_h}")
+def get_image_dims(file_path):
+    """Quickly peeks at the first image to get dimensions."""
+    with Image.open(file_path) as img:
+        return img.size
 
-    # --- 2. Load Model & Run Inference ---    
-    model = DepthAnything3.from_pretrained(model_dir).to(device)
-    
-    frame_paths_str = [str(f) for f in frame_files]
-    
-    with torch.inference_mode(), torch.autocast(device_type=device, dtype=torch.bfloat16):
-        preds = model.inference(
-            image=frame_paths_str,
-            export_dir=str(cache_dir / "da3_out"),
-            export_format="glb",
-            use_ray_pose=True
-        )
 
-    # --- 3. Vectorized Intrinsics Processing ---
-    proc_h, proc_w = preds.processed_images.shape[1:3]
+def get_processed_hw(preds):
+    """Extracts processed height and width from model predictions."""
+    s = preds.processed_images.shape
+
+    if len(s) == 4 and s[1] == 3:
+        return s[2], s[3]
+
+    if len(s) == 4 and s[-1] == 3:
+        return s[1], s[2]
+
+
+def compute_intrinsics(preds, orig_w, orig_h):
+    """
+    Scales model intrinsics back to original resolution and 
+    calculates median camera parameters.
+    """
+    proc_h, proc_w = get_processed_hw(preds)
     scale_x, scale_y = orig_w / proc_w, orig_h / proc_h
 
     Ks = preds.intrinsics.astype(np.float32)
-    
     fx = Ks[:, 0, 0] * scale_x
     fy = Ks[:, 1, 1] * scale_y
     cx = Ks[:, 0, 2] * scale_x
@@ -67,50 +72,79 @@ def main():
     
     if not valid_mask.any():
         raise RuntimeError("No valid intrinsics found (all NaN or zero).")
-        
-    valid_params = params[valid_mask]
-    final_fx, final_fy, final_cx, final_cy = np.median(valid_params, axis=0)
+
+    final_fx, final_fy, final_cx, final_cy = np.median(params[valid_mask], axis=0)
     angle_x = 2.0 * np.arctan((orig_w / 2.0) / final_fx)
 
-    # --- 4. Vectorized Extrinsics Processing ---
-    num_frames = len(preds.extrinsics)
-    
-    w2c = np.eye(4, dtype=np.float32).reshape(1, 4, 4).repeat(num_frames, axis=0)
-    
-    if preds.extrinsics.shape[-2:] == (3, 4):
-        w2c[:, :3, :] = preds.extrinsics
-    elif preds.extrinsics.shape[-2:] == (4, 4):
-        w2c[:] = preds.extrinsics
+    return final_fx, final_fy, final_cx, final_cy, angle_x
+
+
+def compute_extrinsics(preds):
+    """Ensures extrinsics are valid 4x4 matrices."""
+    ext = preds.extrinsics.astype(np.float32)
+    n = ext.shape[0]
+
+    w2c = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    if ext.shape[-2:] == (3, 4):
+        w2c[:, :3, :] = ext
+    elif ext.shape[-2:] == (4, 4):
+        w2c[:] = ext
     else:
-        raise ValueError(f"Unexpected extrinsics shape: {preds.extrinsics.shape}")
+        raise ValueError(f"Unexpected extrinsics shape: {ext.shape}")
 
-    c2w_opencv = np.linalg.inv(w2c)
+    c2w_cv = np.linalg.inv(w2c)
 
-    flip_mat = np.diag([1, -1, -1, 1]).astype(np.float32)
-    c2w_opengl = c2w_opencv @ flip_mat
+    flip = np.diag([1, -1, -1, 1]).astype(np.float32)
 
-    # --- 5. Generate JSON ---
-    frames_json = [
-        {
+    c2w = c2w_cv @ flip
+    return c2w
+
+
+def main():
+    cfg = get_config()
+    frame_files = get_frame_paths(cfg["img_dir"], cfg["sample_rate"])
+    orig_w, orig_h = get_image_dims(frame_files[0])
+
+    print(f"[DA3] Scene: {cfg['scene']} | Frames: {len(frame_files)} | Res: {orig_w}x{orig_h}")
+
+    print(f"[DA3] Loading model from {cfg['model_dir']}...")
+    model = DepthAnything3.from_pretrained(cfg["model_dir"]).to(cfg["device"])
+    
+    print("Running inference...")
+    with torch.inference_mode(), torch.autocast(device_type=cfg["device"], dtype=torch.bfloat16):
+        preds = model.inference(
+            image=[str(f) for f in frame_files],
+            export_dir=str(cfg["cache_dir"]),
+            export_format="glb",
+            use_ray_pose=True,
+            ref_view_strategy="middle"
+        )
+
+    fx, fy, cx, cy, angle_x = compute_intrinsics(preds, orig_w, orig_h)
+    c2w_matrices = compute_extrinsics(preds)
+
+    print(f"\n[Stats] Camera Parameters:")
+    print(f"  Focal Length (X/Y): {fx:.2f} / {fy:.2f}")
+    print(f"  Principal Point   : {cx:.2f}, {cy:.2f}")
+    print(f"  Field of View (X) : {np.degrees(angle_x):.2f} deg\n")
+
+    frames_json = []
+    for f, matrix in zip(frame_files, c2w_matrices):
+        frames_json.append({
             "file_path": f"images/{f.name}",
-            "transform_matrix": c2w.tolist()
-        }
-        for f, c2w in zip(frame_files, c2w_opengl)
-    ]
+            "transform_matrix": matrix.tolist()
+        })
 
     out_data = {
         "camera_angle_x": float(angle_x),
-        "fl_x": float(final_fx),
-        "fl_y": float(final_fy),
-        "cx": float(final_cx),
-        "cy": float(final_cy),
-        "w": int(orig_w),
-        "h": int(orig_h),
+        "fl_x": float(fx), "fl_y": float(fy),
+        "cx": float(cx),   "cy": float(cy),
+        "w": int(orig_w),  "h": int(orig_h),
         "frames": frames_json,
     }
 
-    out_json.write_text(json.dumps(out_data, indent=4))
-    print(f"[DA3] Done. Saved to {out_json}")
+    cfg["out_json"].write_text(json.dumps(out_data, indent=4))
+    print(f"[DA3] Done. Saved transforms to {cfg['out_json']}")
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ services:
       <<: *common-env
       HF_TOKEN: ${HF_TOKEN}
       SAM3_MIN_SCORE: ${SAM3_MIN_SCORE}
-      SAM3_MIN_FRAME_PERCENT: ${SAM3_MIN_FRAME_PERCENT}
+      SAM3_MIN_FRAME_DURATION: ${SAM3_MIN_FRAME_DURATION}
     volumes:
       - ./data:/data
       - ./data/cache/sam3:/root/.cache
