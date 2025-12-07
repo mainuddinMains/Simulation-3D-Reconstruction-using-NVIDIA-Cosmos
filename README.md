@@ -13,7 +13,7 @@ Video2Sim is a Docker-based pipeline for converting raw video (or sensor logs) i
   - The primary VRAM bottlenecks in the current pipeline are SAM3 and DA3. These stages typically complete in minutes, but output quality depends on the number of frames provided.
   - As a reference point, 380 frames required 80 GB of VRAM.
   - The main process, HoloScene, did not exceed 10 GB of VRAM usage in my tests.
-  - Because of this, I recommend renting a cloud GPU to run SAM3 and DA3, then copying the necessary directories locally (or to a smaller GPU instance) to complete training with HoloScene.
+  - Because of this, I recommend renting a cloud GPU to run SAM3 and DA3, then copying the necessary directories (`data/input/custom`) locally (or to a smaller GPU instance) to complete training with HoloScene.
 
 ## Pipeline Overview
 

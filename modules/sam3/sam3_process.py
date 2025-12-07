@@ -24,29 +24,18 @@ def get_config():
     }
 
 
-def load_frames(img_dir):
-    """Loads and numerically sorts video frames."""
-    files = sorted(
-        [f for f in img_dir.iterdir() if not f.name.startswith('.')],
-        key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
-    )
-    return [Image.open(f) for f in files], files
-
-
-def save_mask(filepath, masks, ids, scores, id_map, h, w, min_score):
+def save_mask(filepath, masks, ids, id_map, shape):
     """Composites overlapping masks using Painter's Algorithm (largest drawn first)."""
-    final_mask = np.full((h, w), 255, dtype=np.uint8)
+    final = np.full(shape, 255, dtype=np.uint8)
     
-    valid_indices = [i for i, s in enumerate(scores) if s >= min_score and int(ids[i]) in id_map]
+    layers = [(m, id_map[int(oid)]) for m, oid in zip(masks, ids) if int(oid) in id_map]
     
-    if valid_indices:
-        curr_masks = masks[valid_indices]
-        curr_ids = ids[valid_indices]
-        areas = curr_masks.sum(axis=(1, 2))
-        for idx in np.argsort(areas)[::-1]:
-            final_mask[curr_masks[idx] > 0] = id_map[int(curr_ids[idx])]
+    if layers:
+        layers.sort(key=lambda x: np.count_nonzero(x[0]), reverse=True)
+        for m, color in layers:
+            final[m > 0] = color
 
-    Image.fromarray(final_mask).save(filepath)
+    Image.fromarray(final).save(filepath)
 
 
 def print_stats_table(prompts, prompt_counts, id_to_prompt, valid_ids, total_frames):
@@ -76,11 +65,19 @@ def main():
     cfg = get_config()
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
 
-    frames, frame_files = load_frames(cfg["img_dir"])
+    files = sorted(
+        [f for f in cfg["img_dir"].iterdir() if not f.name.startswith('.')],
+        key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
+    )
+    frames = [Image.open(f) for f in files]
     h, w = frames[0].size[::-1]
     total_frames = len(frames)
 
-    model = Sam3VideoModel.from_pretrained("facebook/sam3", config=Sam3VideoConfig(recondition_on_trk_masks=True))
+    video_cfg = Sam3VideoConfig(
+            recondition_on_trk_masks=True,
+            score_threshold_detection=cfg["min_score"],
+        )
+    model = Sam3VideoModel.from_pretrained("facebook/sam3", config=video_cfg)
     model.to(cfg["device"], dtype=torch.bfloat16)
     processor = Sam3VideoProcessor.from_pretrained("facebook/sam3")
 
@@ -99,17 +96,16 @@ def main():
         for output in model.propagate_in_video_iterator(session):
             processed = processor.postprocess_outputs(session, output)
             
-            scores = processed["scores"].cpu().numpy()
             ids = processed["object_ids"].cpu().numpy().astype(int)
             masks = processed["masks"].cpu().numpy().astype(np.uint8)
-            prompt_map = processed["prompt_to_obj_ids"]
-
-            if masks.ndim == 2: masks = masks[np.newaxis, ...]
-
-            high_conf_ids = set(ids[scores >= cfg["min_score"]])
             
-            for p_text, p_ids in prompt_map.items():
-                active_ids = [oid for oid in p_ids if oid in high_conf_ids]
+            if masks.ndim == 2: masks = masks[None, ...]
+
+            current_ids_set = set(ids)
+            
+            for p_text, p_ids in processed["prompt_to_obj_ids"].items():
+                active_ids = [oid for oid in p_ids if oid in current_ids_set]
+                
                 if active_ids:
                     prompt_counts[p_text] += 1
                     for oid in active_ids:
@@ -117,7 +113,7 @@ def main():
                         id_to_prompt[oid] = p_text
 
             cached_data.append({
-                "masks": masks, "ids": ids, "scores": scores, "file": frame_files[output.frame_idx]
+                "masks": masks, "ids": ids, "frame_idx": output.frame_idx
             })
 
     min_frames_id = int(np.ceil(total_frames * cfg["min_dur"]))
@@ -133,11 +129,14 @@ def main():
     
     print(f"Summary: Processed {total_frames} frames. Score > {cfg['min_score']}, Frame Duration > {cfg['min_dur']*100}%\n")
     print(f"Saving {len(final_valid_ids)} object masks...")
+
     for data in cached_data:
         save_mask(
-            cfg["out_dir"] / data["file"].name, 
-            data["masks"], data["ids"], data["scores"], 
-            id_map, h, w, cfg["min_score"]
+            cfg["out_dir"] / files[data["frame_idx"]].name, 
+            data["masks"], 
+            data["ids"], 
+            id_map, 
+            (h, w)
         )
 
     print(f"[SAM3] Done. Saved to {cfg['out_dir']}")

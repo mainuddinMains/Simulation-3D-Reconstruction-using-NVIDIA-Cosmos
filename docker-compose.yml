@@ -43,7 +43,6 @@ services:
     container_name: da3_container
     environment:
       <<: *common-env
-      DA3_MODEL_DIR: ${DA3_MODEL_DIR}
     volumes:
       - ./data:/data
       - ./data/cache/da3:/root/.cache
