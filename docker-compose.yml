@@ -2,6 +2,7 @@
 x-common-env: &common-env
   SCENE_NAME: ${SCENE_NAME}
   DATA_ROOT: ${DATA_ROOT}
+  OUTPUT_ROOT: ${OUTPUT_ROOT}
   CUDA_HOME: /usr/local/cuda
   TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}
 

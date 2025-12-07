@@ -12,11 +12,11 @@ from transformers import Sam3VideoConfig, Sam3VideoModel, Sam3VideoProcessor
 
 def get_config():
     scene = os.environ["SCENE_NAME"]
-    root = Path(os.environ["DATA_ROOT"])
+    data_root = Path(os.environ["DATA_ROOT"])
     return {
         "scene": scene,
-        "img_dir": root / scene / "images",
-        "out_dir": root / scene / "instance_mask",
+        "img_dir": data_root / scene / "images",
+        "out_dir": data_root / scene / "instance_mask",
         "min_score": float(os.environ["SAM3_MIN_SCORE"]),
         "min_dur": float(os.environ["SAM3_MIN_FRAME_DURATION"]) / 100.0,
         "prompts": [p.strip() for p in Path("prompts.txt").read_text().splitlines() if p.strip()],

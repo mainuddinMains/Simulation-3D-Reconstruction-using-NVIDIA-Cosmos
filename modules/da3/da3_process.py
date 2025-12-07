@@ -12,12 +12,13 @@ from depth_anything_3.api import DepthAnything3
 
 def get_config():
     scene = os.environ["SCENE_NAME"]
-    root = Path(os.environ["DATA_ROOT"])
+    data_root = Path(os.environ["DATA_ROOT"])
+    output_root = Path(os.environ["OUTPUT_ROOT"])
     return {
         "scene": scene,
-        "img_dir": root / scene / "images",
-        "out_json": root / scene / "transforms.json",
-        "cache_dir": root / scene / "da3_out",
+        "img_dir": data_root / scene / "images",
+        "out_json": data_root / scene / "transforms.json",
+        "out_dir": output_root / scene / "da3_out",
         "model_dir": os.environ["DA3_MODEL_DIR"],
         "device": "cuda"
     }
@@ -110,10 +111,9 @@ def main():
     with torch.inference_mode(), torch.autocast(device_type=cfg["device"], dtype=torch.bfloat16):
         preds = model.inference(
             image=[str(f) for f in frame_files],
-            export_dir=str(cfg["cache_dir"]),
+            export_dir=str(cfg["out_dir"]),
             export_format="glb",
-            use_ray_pose=True,
-            ref_view_strategy="middle"
+            use_ray_pose=True
         )
 
     fx, fy, cx, cy, angle_x = compute_intrinsics(preds, orig_w, orig_h)
