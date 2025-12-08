@@ -7,7 +7,7 @@ IMG_DIR="${DATA_ROOT}/${SCENE_NAME}/images"
 echo "Checking image directory: ${IMG_DIR}"
 
 if ! ls "$IMG_DIR" | grep -qEi '\.(jpe?g|png)$'; then
-  echo "❌ No .jpg/.jpeg/.png files found in $IMG_DIR"
+  echo "❌ No image files found in $IMG_DIR"
   exit 1
 fi
 

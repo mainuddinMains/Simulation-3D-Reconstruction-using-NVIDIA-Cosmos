@@ -49,31 +49,51 @@ def compute_intrinsics(preds, orig_w, orig_h):
 
 
 def compute_extrinsics(preds):
-    """Converts W2C to C2W, reorients axes, and centers the scene."""
-    ext = preds.extrinsics.astype(np.float32)
-    n = ext.shape[0]
+    """Converts W2C to C2W"""
+    w2c = preds.extrinsics.astype(np.float32)
+    n_frames = w2c.shape[0]
 
-    R_w2c = ext[:, :3, :3]
-    t_w2c = ext[:, :3, 3:4]
-    
-    R_c2w = np.transpose(R_w2c, (0, 2, 1))
-    t_c2w = -np.matmul(R_c2w, t_w2c)
+    R_w2c = w2c[:, :3, :3]
+    t_w2c = w2c[:, :3, 3:4]
 
-    c2w = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    R_c2w = R_w2c.transpose(0, 2, 1)
+    t_c2w = -R_c2w @ t_w2c
+
+    c2w = np.zeros((n_frames, 4, 4), dtype=np.float32)
+    c2w[:, 3, 3] = 1.0 
     c2w[:, :3, :3] = R_c2w
     c2w[:, :3, 3:4] = t_c2w
-
-    transform = np.array([
-        [1,  0,  0,  0],
-        [0,  0, -1, 0],
-        [0,  1,  0, 0],
-        [0,  0,  0, 1]
-    ], dtype=np.float32)
     
-    c2w = transform @ c2w
+    floor_fix_matrix = np.array([
+        [1,  0,  0,  0],
+        [0,  0, -1,  0],
+        [0,  1,  0,  0],
+        [0,  0,  0,  1]
+    ], dtype=np.float32)
+    c2w = floor_fix_matrix @ c2w
 
     c2w[:, :3, 3] -= c2w[:, :3, 3].mean(axis=0)
 
+    return c2w
+
+
+def normalize_cameras(c2w):
+    """
+    Centers the scene and aligns the dataset principal axes to World X, Y, Z.
+    """
+    c2w[:, :3, 3] -= c2w[:, :3, 3].mean(axis=0)
+
+    _, _, vh = np.linalg.svd(c2w[:, :3, 3])
+    R_new = vh
+
+    avg_cam_y = c2w[:, :3, 1].mean(axis=0) 
+    if np.dot(R_new[2, :], avg_cam_y) > 0: 
+        R_new[2, :] *= -1
+        R_new[1, :] *= -1
+
+    c2w[:, :3, :3] = R_new @ c2w[:, :3, :3]
+    c2w[:, :3, 3] = (R_new @ c2w[:, :3, 3].T).T
+    
     return c2w
 
 
@@ -103,6 +123,7 @@ def main():
 
     fx, fy, cx, cy, angle_x = compute_intrinsics(preds, orig_w, orig_h)
     c2w_matrices = compute_extrinsics(preds)
+    c2w_matrices = normalize_cameras(c2w_matrices)
 
     frames_json = [
         {"file_path": f"images/{f.name}", "transform_matrix": m.tolist()}
