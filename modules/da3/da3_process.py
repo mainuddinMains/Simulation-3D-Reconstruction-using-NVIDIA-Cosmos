@@ -48,22 +48,23 @@ def compute_intrinsics(preds, orig_w, orig_h):
     return final_fx, final_fy, final_cx, final_cy, angle_x
 
 
-def compute_extrinsics(preds):
-    """Converts W2C to C2W"""
-    w2c = preds.extrinsics.astype(np.float32)
-    n_frames = w2c.shape[0]
+def process_poses(preds):
+    """
+    1. Invert (W2C -> C2W): Convert World-to-Camera matrices to Camera-to-World poses.
+    2. CV -> GL: Convert camera coordinate system (OpenCV: Down/Right) to OpenGL (Up/Back).
+    3. World Reorient: Rotate the Global World frame (swap Y-up to Z-up).
+    4. Center: Subtract the mean translation to center the trajectory at (0,0,0).
+    5. Align: Use SVD/PCA to align the trajectory's principal axes to the world axes.
+    """
+    ext = preds.extrinsics.astype(np.float32)
+    n = ext.shape[0]
+    w2c = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    w2c[:, :3, :] = ext
+    c2w = np.linalg.inv(w2c)
 
-    R_w2c = w2c[:, :3, :3]
-    t_w2c = w2c[:, :3, 3:4]
+    flip_mat = np.diag([1, -1, -1, 1]).astype(np.float32)
+    c2w = c2w @ flip_mat
 
-    R_c2w = R_w2c.transpose(0, 2, 1)
-    t_c2w = -R_c2w @ t_w2c
-
-    c2w = np.zeros((n_frames, 4, 4), dtype=np.float32)
-    c2w[:, 3, 3] = 1.0 
-    c2w[:, :3, :3] = R_c2w
-    c2w[:, :3, 3:4] = t_c2w
-    
     floor_fix_matrix = np.array([
         [1,  0,  0,  0],
         [0,  0, -1,  0],
@@ -74,26 +75,15 @@ def compute_extrinsics(preds):
 
     c2w[:, :3, 3] -= c2w[:, :3, 3].mean(axis=0)
 
-    return c2w
-
-
-def normalize_cameras(c2w):
-    """
-    Centers the scene and aligns the dataset principal axes to World X, Y, Z.
-    """
-    c2w[:, :3, 3] -= c2w[:, :3, 3].mean(axis=0)
-
     _, _, vh = np.linalg.svd(c2w[:, :3, 3])
-    R_new = vh
-
+    R_align = vh
     avg_cam_y = c2w[:, :3, 1].mean(axis=0) 
-    if np.dot(R_new[2, :], avg_cam_y) > 0: 
-        R_new[2, :] *= -1
-        R_new[1, :] *= -1
+    if np.dot(R_align[2, :], avg_cam_y) > 0: 
+        R_align[2, :] *= -1
+        R_align[1, :] *= -1
+    c2w[:, :3, :3] = R_align @ c2w[:, :3, :3]
+    c2w[:, :3, 3] = (R_align @ c2w[:, :3, 3].T).T
 
-    c2w[:, :3, :3] = R_new @ c2w[:, :3, :3]
-    c2w[:, :3, 3] = (R_new @ c2w[:, :3, 3].T).T
-    
     return c2w
 
 
@@ -122,8 +112,7 @@ def main():
         )
 
     fx, fy, cx, cy, angle_x = compute_intrinsics(preds, orig_w, orig_h)
-    c2w_matrices = compute_extrinsics(preds)
-    c2w_matrices = normalize_cameras(c2w_matrices)
+    c2w_matrices = process_poses(preds)
 
     frames_json = [
         {"file_path": f"images/{f.name}", "transform_matrix": m.tolist()}
