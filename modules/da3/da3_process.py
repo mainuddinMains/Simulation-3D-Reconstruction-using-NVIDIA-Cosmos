@@ -54,7 +54,7 @@ def process_poses(preds):
     2. CV -> GL: Convert camera coordinate system (OpenCV: Down/Right) to OpenGL (Up/Back).
     3. Center: Subtract the mean translation to center the trajectory at (0,0,0).
     4. Align: Use SVD/PCA to align the trajectory's principal axes to the world axes.
-    5. Reorient world: apply 180° rotation around the X axis.
+    5. Reorient world: apply 90° rotation around the X axis.
     """
     ext = preds.extrinsics.astype(np.float32)
     n = ext.shape[0]
@@ -82,10 +82,10 @@ def process_poses(preds):
     c2w[:, :3, 3] = (R_align @ c2w[:, :3, 3].T).T
 
     floor_fix_matrix = np.array([
-        [1, 0, 0, 0],
-        [0, -1, 0, 0],
-        [0, 0, -1, 0],
-        [0, 0, 0, 1],
+        [1,  0,  0,  0],
+        [0,  0, -1,  0],
+        [0,  1,  0,  0],
+        [0,  0,  0,  1],
     ], dtype=np.float32)
     c2w = floor_fix_matrix @ c2w
 
