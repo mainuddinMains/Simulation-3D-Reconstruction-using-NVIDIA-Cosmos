@@ -66,16 +66,16 @@ def main():
     cfg["out_dir"].mkdir(parents=True, exist_ok=True)
 
     files = sorted(
-        [f for f in cfg["img_dir"].iterdir() if not f.name.startswith('.')],
-        key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
+        [f for f in cfg["img_dir"].iterdir() if not f.name.startswith('.')]
     )
+    
     frames = [Image.open(f) for f in files]
     h, w = frames[0].size[::-1]
     total_frames = len(frames)
 
     video_cfg = Sam3VideoConfig(
             recondition_on_trk_masks=True,
-            score_threshold_detection=cfg["min_score"],
+            score_threshold_detection=cfg["min_score"]
         )
     model = Sam3VideoModel.from_pretrained("facebook/sam3", config=video_cfg)
     model.to(cfg["device"], dtype=torch.bfloat16)

@@ -33,7 +33,7 @@ else
 fi
 
 ffmpeg -y $PRE_FLAGS -i "$SOURCE" \
-    -vf "fps=${FPS_EXTRACT},scale=512:512:force_original_aspect_ratio=increase,crop=512:512,format=rgb24" \
+    -vf "fps=${FPS_EXTRACT},scale=${IMG_WIDTH}:${IMG_HEIGHT}:force_original_aspect_ratio=increase,crop=${IMG_WIDTH}:${IMG_HEIGHT},format=rgb24" \
     -c:v png -compression_level 6 -pix_fmt rgb24 \
     "$OUTPUT_DIR/frame_%04d.png"
 

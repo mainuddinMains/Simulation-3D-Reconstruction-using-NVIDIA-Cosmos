@@ -47,6 +47,9 @@ Place video file into `data/input`.
 2. **Configure environment**  
 Fill out `.env` (scene name, fps extraction etc.).
 
+3. **Configure HoloScene Configs**  
+Fill out the configuration files in `modules/holoscene/confs/` (`base.conf`, `post.conf`, `tex.conf`).
+
 3. **Build and run each module in sequence**  
     ```bash
     docker compose up --build preprocessor

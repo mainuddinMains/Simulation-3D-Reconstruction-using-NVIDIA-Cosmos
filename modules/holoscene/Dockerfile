@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     libgl1 \
     libglib2.0-0 \
+    gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install torch==2.5.1+cu118 torchvision==0.20.1+cu118 torchaudio==2.5.1+cu118 --index-url https://download.pytorch.org/whl/cu118

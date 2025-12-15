@@ -72,19 +72,18 @@ def process_poses(preds):
 
     c2w[:, :3, 3] -= c2w[:, :3, 3].mean(axis=0)
 
-    _, _, vh = np.linalg.svd(c2w[:, :3, 3])
+    _, _, vh = np.linalg.svd(c2w[:, :3, 3], full_matrices=False)
     R_align = vh
-    avg_cam_y = c2w[:, :3, 1].mean(axis=0) 
-    if np.dot(R_align[2, :], avg_cam_y) > 0: 
+    if np.linalg.det(R_align) < 0:
         R_align[2, :] *= -1
-        R_align[1, :] *= -1
+    
     c2w[:, :3, :3] = R_align @ c2w[:, :3, :3]
     c2w[:, :3, 3] = (R_align @ c2w[:, :3, 3].T).T
 
     floor_fix_matrix = np.array([
         [1,  0,  0,  0],
-        [0,  0, -1,  0],
-        [0,  1,  0,  0],
+        [0,  0,  1,  0],
+        [0, -1,  0,  0],
         [0,  0,  0,  1],
     ], dtype=np.float32)
     c2w = floor_fix_matrix @ c2w
@@ -96,14 +95,11 @@ def main():
     cfg = get_config()
     
     files = sorted(
-        [f for f in cfg["img_dir"].iterdir() if not f.name.startswith('.')],
-        key=lambda x: int(re.search(r"\d+", x.name).group() or 0)
+        [f for f in cfg["img_dir"].iterdir() if not f.name.startswith('.')]
     )
     
     with Image.open(files[0]) as img:
         orig_w, orig_h = img.size
-
-    print(f"[DA3] Scene: {cfg['scene']} | Frames: {len(files)} | Res: {orig_w}x{orig_h}")
     
     model = DepthAnything3.from_pretrained(cfg["model_dir"]).to(cfg["device"])
     

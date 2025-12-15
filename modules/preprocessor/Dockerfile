@@ -18,4 +18,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends librealsense2-u
 
 WORKDIR /app/preprocessor
 
-COPY pre_process.sh .
+COPY preprocess.sh .

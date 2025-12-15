@@ -3,6 +3,8 @@ x-common-env: &common-env
   SCENE_NAME: ${SCENE_NAME}
   DATA_ROOT: ${DATA_ROOT}
   OUTPUT_ROOT: ${OUTPUT_ROOT}
+  IMG_HEIGHT: ${IMG_HEIGHT}
+  IMG_WIDTH: ${IMG_WIDTH}
   CUDA_HOME: /usr/local/cuda
   TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}
 
@@ -32,7 +34,7 @@ services:
       CAPTURE_FRAMERATE: ${CAPTURE_FRAMERATE}
     volumes:
       - ./data:/data
-    command: ["./pre_process.sh"] 
+    command: ["./preprocess.sh"] 
 
   da3:
     <<: *gpu-deploy
@@ -83,6 +85,7 @@ services:
       - ./data:/data
       - ./data/cache/holoscene:/root/.cache
       - ./docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
+      - ./modules/holoscene/confs:/app/holoscene/confs
       - ./data/output:/app/holoscene/exps
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: ["./hs_process.sh"]
