@@ -2,6 +2,8 @@
 
 Video2Sim is a Docker-based pipeline for converting raw video (or sensor logs) into simulation-ready 3D assets using a sequence of modular components.
 
+### News
+- **12/25/2025:** Pipeline ready for public use. Current papers used: *Segment Anything Model 3*, *Depth Anything 3*, and *HoloScene*.
 ## Requirements
 
 - **NVIDIA GPU with CUDA support**
