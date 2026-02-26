@@ -3,5 +3,7 @@ data/output
 data/cache
 data/temp_frames
 .vscode
+.env
+.DS_Store
 
 !.gitkeep

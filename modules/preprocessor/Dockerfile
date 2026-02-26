@@ -14,7 +14,13 @@ RUN mkdir -p /etc/apt/keyrings \
     && curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | gpg --dearmor -o /etc/apt/keyrings/librealsense.gpg
 RUN echo "deb [signed-by=/etc/apt/keyrings/librealsense.gpg] https://librealsense.intel.com/Debian/apt-repo `lsb_release -cs` main" | \
     tee /etc/apt/sources.list.d/librealsense.list
-RUN apt-get update && apt-get install -y --no-install-recommends librealsense2-utils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && if apt-cache show librealsense2-utils >/dev/null 2>&1; then \
+        apt-get install -y --no-install-recommends librealsense2-utils; \
+    else \
+        echo "WARNING: librealsense2-utils is unavailable for this distro/arch. .bag input support will be disabled."; \
+    fi \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/preprocessor
 

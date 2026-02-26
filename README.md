@@ -52,7 +52,22 @@ Fill out `.env` (scene name, fps extraction etc.).
 3. **Configure HoloScene Configs**  
 Fill out the configuration files in `modules/holoscene/confs/` (`base.conf`, `post.conf`, `tex.conf`).
 
-3. **Build and run each module in sequence**  
+4. **Run with one command (recommended)**  
+    ```bash
+    ./run_pipeline.sh
+    ```
+    The script validates Docker, `.env`, required files, and input assets before launching.
+
+5. **Optional stage controls**
+    ```bash
+    # Start from a stage (runs that stage and the rest)
+    ./run_pipeline.sh --from da3
+
+    # Run only one stage
+    ./run_pipeline.sh --only sam3
+    ```
+
+6. **Manual equivalent (if needed)**  
     ```bash
     docker compose up --build preprocessor
     docker compose up --build da3
@@ -60,7 +75,7 @@ Fill out the configuration files in `modules/holoscene/confs/` (`base.conf`, `po
     docker compose up --build holoscene
     ```
 
-4. **Retrieve results**  
+7. **Retrieve results**  
 Results will be generated into `data/output`.
 
 **Note:** To keep the container alive for debugging, temporarily set
